@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AAHE — Leitor de QR Code</title>
+  <script src="https://unpkg.com/html5-qrcode" defer></script>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;padding:24px;min-height:100vh;font-family:Arial,sans-serif;color:#222;background:#f5f7fb}
+    .card{width:100%;max-width:440px;margin:30px auto;padding:28px;text-align:center;background:#fff;border-radius:18px;box-shadow:0 8px 30px rgba(0,0,0,.08)}
+    h1{margin:0 0 6px;color:#0b5394}
+    h2{margin:0 0 20px;font-size:20px}
+    .parceiro{margin-bottom:18px;color:#555}
+    #reader{width:100%;margin:18px auto;overflow:hidden;border-radius:12px}
+    input{width:100%;margin-top:15px;padding:12px;font-size:15px;border:1px solid #ccc;border-radius:8px}
+    button{width:100%;margin-top:12px;padding:12px;font-size:15px;color:#fff;background:#0b5394;border:0;border-radius:8px;cursor:pointer}
+    button:disabled{opacity:.65;cursor:default}
+    .secundario{background:#5f6368}
+    .separador{display:flex;align-items:center;gap:10px;margin:20px 0 5px;color:#777;font-size:13px}
+    .separador:before,.separador:after{content:"";flex:1;height:1px;background:#ddd}
+    .nota,#estado{margin-top:14px;font-size:13px;color:#666}
+    .erro{color:#d93025!important}
+    .sucesso{color:#0f9d58!important}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>AAHE</h1>
+    <h2>Validação de Sócio</h2>
+    <div class="parceiro">Parceiro: <strong id="nomeParceiro"></strong></div>
+
+    <button id="btnCamera" type="button" onclick="iniciarCamera()">📷 Ler QR Code</button>
+    <div id="reader"></div>
+    <button id="btnParar" class="secundario" type="button" onclick="pararCamera()" hidden>Parar câmara</button>
+
+    <div class="separador">ou</div>
+
+    <input id="identificador" type="text" autocomplete="off" placeholder="N.º de sócio, UUID ou link do QR Code">
+    <button type="button" onclick="validarManual()">Validar sócio</button>
+
+    <div id="estado"></div>
+    <div class="nota">Também pode utilizar um leitor QR USB ou introduzir manualmente o n.º de sócio.</div>
+  </main>
+
+  <script>
+    const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyuNqtMs4RhXKTnQTgOMrJRCotyAFGsBZ8YHiAbgBpRo4AItip6LcpmjklMFKKMxlvQrg/exec";
+    const parametros = new URLSearchParams(window.location.search);
+    const codigoParceiro = (parametros.get("parceiro") || "").trim();
+
+    let leitorQR = null;
+    let leituraConcluida = false;
+
+    document.addEventListener("DOMContentLoaded", function () {
+      const nome = document.getElementById("nomeParceiro");
+      const estado = document.getElementById("estado");
+
+      if (!codigoParceiro) {
+        nome.textContent = "não identificado";
+        estado.textContent = "O link não contém o código do parceiro.";
+        estado.className = "erro";
+        document.getElementById("btnCamera").disabled = true;
+        return;
+      }
+
+      nome.textContent = codigoParceiro;
+
+      document.getElementById("identificador").addEventListener("keydown", function (evento) {
+        if (evento.key === "Enter") {
+          evento.preventDefault();
+          validarManual();
+        }
+      });
+    });
+
+    function extrairIdentificador(valor) {
+      let identificador = String(valor || "").trim();
+
+      try {
+        const url = new URL(identificador);
+        identificador = url.searchParams.get("id") || identificador;
+      } catch (erro) {}
+
+      if (identificador.toUpperCase().startsWith("AAHE:")) {
+        identificador = identificador.substring(5);
+      }
+
+      return identificador.trim();
+    }
+
+    function redirecionarParaValidacao(valor) {
+      const identificador = extrairIdentificador(valor);
+      const estado = document.getElementById("estado");
+
+      if (!identificador) {
+        estado.textContent = "Introduza ou leia um identificador de sócio.";
+        estado.className = "erro";
+        return;
+      }
+
+      estado.textContent = "A validar...";
+      estado.className = "";
+
+      const destino = WEB_APP_URL
+        + "?parceiro=" + encodeURIComponent(codigoParceiro)
+        + "&id=" + encodeURIComponent(identificador);
+
+      window.location.href = destino;
+    }
+
+    function validarManual() {
+      redirecionarParaValidacao(document.getElementById("identificador").value);
+    }
+
+    async function iniciarCamera() {
+      const estado = document.getElementById("estado");
+      const btnCamera = document.getElementById("btnCamera");
+      const btnParar = document.getElementById("btnParar");
+
+      leituraConcluida = false;
+      btnCamera.disabled = true;
+      estado.textContent = "A iniciar a câmara...";
+      estado.className = "";
+
+      try {
+        leitorQR = new Html5Qrcode("reader");
+
+        await leitorQR.start(
+          { facingMode: "environment" },
+          {
+            fps: 10,
+            qrbox: function (largura, altura) {
+              const tamanho = Math.floor(Math.min(largura, altura) * 0.7);
+              return { width: tamanho, height: tamanho };
+            }
+          },
+          async function (textoLido) {
+            if (leituraConcluida) return;
+            leituraConcluida = true;
+
+            estado.textContent = "QR Code lido.";
+            estado.className = "sucesso";
+
+            await pararCamera();
+            redirecionarParaValidacao(textoLido);
+          },
+          function () {}
+        );
+
+        estado.textContent = "Aponte a câmara para o QR Code do cartão.";
+        btnParar.hidden = false;
+      } catch (erro) {
+        btnCamera.disabled = false;
+        btnParar.hidden = true;
+        estado.textContent = "Não foi possível abrir a câmara. Confirme a permissão do navegador.";
+        estado.className = "erro";
+        console.error(erro);
+      }
+    }
+
+    async function pararCamera() {
+      const btnCamera = document.getElementById("btnCamera");
+      const btnParar = document.getElementById("btnParar");
+
+      try {
+        if (leitorQR && leitorQR.isScanning) {
+          await leitorQR.stop();
+        }
+      } catch (erro) {
+        console.error(erro);
+      }
+
+      try {
+        if (leitorQR) {
+          leitorQR.clear();
+        }
+      } catch (erro) {
+        console.error(erro);
+      }
+
+      leitorQR = null;
+      btnCamera.disabled = false;
+      btnParar.hidden = true;
+    }
+  </script>
+</body>
+</html>
